@@ -1,0 +1,8 @@
+{
+  "name": "Remix Pengawas Digital - Modul Ajar AI",
+  "description": "Platform Administrasi Pembelajaran Berbasis AI untuk Pendidik Indonesia (Kurikulum Merdeka \u0026 KBC) Powered by Basuki, S.Kom.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
