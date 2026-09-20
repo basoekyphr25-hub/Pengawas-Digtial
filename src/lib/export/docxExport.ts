@@ -331,8 +331,46 @@ export async function exportKokurikulerToDocx(project: P5Project, globalContext?
             spacing: { after: 150 },
           }),
 
+          ...(project.annualPlanRows && project.annualPlanRows.length > 0 ? [
+            new Paragraph({
+              text: 'B. RENCANA KOKURIKULER SETAHUN',
+              heading: HeadingLevel.HEADING_3,
+              spacing: { before: 150, after: 100 },
+            }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'NO', bold: true })], alignment: AlignmentType.CENTER })], width: { size: 6, type: WidthType.PERCENTAGE } }),
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'SMT', bold: true })], alignment: AlignmentType.CENTER })], width: { size: 8, type: WidthType.PERCENTAGE } }),
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'TEMA / PROJEK', bold: true })] })], width: { size: 36, type: WidthType.PERCENTAGE } }),
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'DIMENSI DPL', bold: true })] })], width: { size: 24, type: WidthType.PERCENTAGE } }),
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'BENTUK', bold: true })] })], width: { size: 16, type: WidthType.PERCENTAGE } }),
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'JP', bold: true })], alignment: AlignmentType.CENTER })], width: { size: 6, type: WidthType.PERCENTAGE } }),
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'JAM', bold: true })], alignment: AlignmentType.CENTER })], width: { size: 8, type: WidthType.PERCENTAGE } }),
+                  ]
+                }),
+                ...project.annualPlanRows.map(row => (
+                  new TableRow({
+                    children: [
+                      new TableCell({ children: [new Paragraph({ text: `${row.id}`, alignment: AlignmentType.CENTER })] }),
+                      new TableCell({ children: [new Paragraph({ text: `${row.smt}`, alignment: AlignmentType.CENTER })] }),
+                      new TableCell({ children: [new Paragraph(row.temaProjek)] }),
+                      new TableCell({ children: [new Paragraph((row.dimensi || []).join(', '))] }),
+                      new TableCell({ children: [new Paragraph(row.bentuk)] }),
+                      new TableCell({ children: [new Paragraph({ text: `${row.jp}`, alignment: AlignmentType.CENTER })] }),
+                      new TableCell({ children: [new Paragraph({ text: row.jam, alignment: AlignmentType.CENTER })] }),
+                    ]
+                  })
+                ))
+              ]
+            }),
+            new Paragraph({ text: '', spacing: { after: 150 } })
+          ] : []),
+
           new Paragraph({
-            text: 'B. DIMENSI SASARAN DELAPAN PROFIL LULUSAN (DPL)',
+            text: project.annualPlanRows && project.annualPlanRows.length > 0 ? 'C. DIMENSI SASARAN DELAPAN PROFIL LULUSAN (DPL)' : 'B. DIMENSI SASARAN DELAPAN PROFIL LULUSAN (DPL)',
             heading: HeadingLevel.HEADING_3,
             spacing: { before: 150, after: 100 },
           }),

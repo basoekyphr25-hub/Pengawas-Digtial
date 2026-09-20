@@ -289,6 +289,16 @@ export interface PaudModulAjar {
 }
 
 // Kokurikuler / Delapan Profil Lulusan (DPL)
+export interface AnnualPlanRow {
+  id: number;
+  smt: number;
+  temaProjek: string;
+  dimensi: string[];
+  bentuk: string;
+  jp: number;
+  jam: string;
+}
+
 export interface P5Project {
   id: string;
   title: string;
@@ -301,6 +311,7 @@ export interface P5Project {
   subDimensions: string[];
   targetEndPhase: string;
   annualTimeline: string;
+  annualPlanRows?: AnnualPlanRow[];
   flowPhases: {
     pengenalan: string[];
     kontekstualisasi: string[];

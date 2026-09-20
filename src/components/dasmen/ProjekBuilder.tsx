@@ -1,10 +1,33 @@
-import React, { useState } from 'react';
-import { Compass, Sparkles, CheckCircle2, Bookmark, Download, Printer, Award } from 'lucide-react';
-import { P5Project, GlobalContext, SavedDocument } from '../../types';
+import React, { useState, useEffect } from 'react';
+import { 
+  Compass, 
+  Sparkles, 
+  CheckCircle2, 
+  Bookmark, 
+  Download, 
+  Printer, 
+  Award, 
+  Calendar, 
+  Clock, 
+  ArrowRight, 
+  ArrowLeft, 
+  Check, 
+  Layers, 
+  BookOpen, 
+  Lightbulb, 
+  RefreshCw,
+  FolderCheck,
+  FileText,
+  Plus,
+  Trash2,
+  X
+} from 'lucide-react';
+import { P5Project, GlobalContext, SavedDocument, AnnualPlanRow } from '../../types';
 import { KOKURIKULER_THEMES, DELAPAN_PROFIL_LULUSAN } from '../../data/curriculumData';
 import { generateP5Project } from '../../lib/gemini/prompts';
 import { exportKokurikulerToDocx, downloadBlob } from '../../lib/export/docxExport';
 import { printKokurikuler } from '../../lib/export/pdfExport';
+import { Step5Kembangkan } from './Step5Kembangkan';
 
 interface ProjekBuilderProps {
   globalContext: GlobalContext;
@@ -12,36 +35,199 @@ interface ProjekBuilderProps {
 }
 
 export const ProjekBuilder: React.FC<ProjekBuilderProps> = ({ globalContext, onSaveToCollection }) => {
-  const availableThemes = KOKURIKULER_THEMES.dasmen;
-  const [selectedThemeTitle, setSelectedThemeTitle] = useState(availableThemes[0].title);
-  const [gradeOrAge, setGradeOrAge] = useState('Kelas 7 (Fase D)');
-  const [focusTopic, setFocusTopic] = useState('Pemanfaatan Sampah Organik & Plastik di Sekolah');
-  const [totalJp, setTotalJp] = useState(60);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [savedBadge, setSavedBadge] = useState(false);
+  // Step state (1: Fokus, 2: Dimensi & Tema, 3: Rencana setahun, 4: Pilih projek, 5: Kembangkan)
+  const [currentStep, setCurrentStep] = useState<number>(1);
 
+  // Identity extraction
+  const schoolName = globalContext?.identity?.schoolName || 'SD IT';
+  const city = globalContext?.identity?.cityDistrict || 'Kampar';
+  const level = globalContext?.identity?.level || 'SD';
+  const studentProfile = globalContext?.studentProfile?.readinessSummary || globalContext?.studentProfile?.socialEmotionalState || 'Murid aktif, sebagian memiliki keberagaman latar belakang dan kedisiplinan';
+  const communityIssue = globalContext?.community?.localChallenges?.join(', ') || 'Pengelolaan sampah lingkungan, kedisiplinan gotong royong, dan pelestarian budaya lokal';
+
+  // STEP 1: Fokus State
+  // Default JP recommendation: SD 252 JP, SMP 360 JP, SMA 396 JP, SMK 180 JP
+  const defaultJp = level === 'SD' ? 252 : level === 'SMP' ? 360 : level === 'SMA' ? 396 : 252;
+  const [totalJp, setTotalJp] = useState<number>(defaultJp);
+
+  // STEP 2: Dimensi & Tema State
+  const [selectedDimensions, setSelectedDimensions] = useState<string[]>([
+    'Kolaborasi',
+    'Kewargaan',
+    'Penalaran Kritis',
+    'Keimanan dan Ketakwaan kepada Tuhan Yang Maha Esa'
+  ]);
+  const standardThemes = KOKURIKULER_THEMES.dasmen;
+  const [customThemes, setCustomThemes] = useState<{ title: string; desc: string }[]>([]);
+  const [showAddCustomTheme, setShowAddCustomTheme] = useState<boolean>(false);
+  const [customThemeTitleInput, setCustomThemeTitleInput] = useState<string>('');
+  const [customThemeDescInput, setCustomThemeDescInput] = useState<string>('');
+  // Multi-theme selection: allows selecting more than one theme
+  const [selectedThemes, setSelectedThemes] = useState<string[]>(['Gaya Hidup Berkelanjutan']);
+  const [focusTopic, setFocusTopic] = useState<string>('Pemanfaatan Sampah Organik & Plastik di Lingkungan Sekolah');
+
+  const allAvailableThemes = [
+    ...standardThemes.map(t => ({ ...t, isCustom: false })),
+    ...customThemes.map(t => ({ ...t, isCustom: true }))
+  ];
+
+  const handleToggleTheme = (themeTitle: string) => {
+    setSelectedThemes(prev => {
+      let updated: string[];
+      if (prev.includes(themeTitle)) {
+        if (prev.length <= 1) {
+          return prev; // Maintain at least 1 theme selected
+        }
+        updated = prev.filter(t => t !== themeTitle);
+      } else {
+        updated = [...prev, themeTitle];
+      }
+      setProjectData(p => ({ ...p, theme: updated.join(', ') }));
+      return updated;
+    });
+  };
+
+  const handleAddCustomTheme = () => {
+    const trimmedTitle = customThemeTitleInput.trim();
+    if (!trimmedTitle) return;
+
+    const exists = allAvailableThemes.some(
+      t => t.title.toLowerCase() === trimmedTitle.toLowerCase()
+    );
+    if (!exists) {
+      const newTheme = {
+        title: trimmedTitle,
+        desc: customThemeDescInput.trim() || 'Tema kustom mandiri dirancang sesuai karakteristik satuan pendidikan.'
+      };
+      setCustomThemes(prev => [...prev, newTheme]);
+    }
+
+    // Auto-select the newly created theme
+    setSelectedThemes(prev => {
+      const updated = prev.includes(trimmedTitle) ? prev : [...prev, trimmedTitle];
+      setProjectData(p => ({ ...p, theme: updated.join(', ') }));
+      return updated;
+    });
+
+    setFocusTopic(`Eksplorasi dan aksi kontekstual tema ${trimmedTitle}`);
+    setCustomThemeTitleInput('');
+    setCustomThemeDescInput('');
+    setShowAddCustomTheme(false);
+  };
+
+  const handleRemoveCustomTheme = (titleToRemove: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCustomThemes(prev => prev.filter(t => t.title !== titleToRemove));
+    setSelectedThemes(prev => {
+      const filtered = prev.filter(t => t !== titleToRemove);
+      const updated = filtered.length > 0 ? filtered : ['Gaya Hidup Berkelanjutan'];
+      setProjectData(p => ({ ...p, theme: updated.join(', ') }));
+      return updated;
+    });
+  };
+
+  // STEP 3: Rencana Setahun State (Sesuai format image.png)
+  const [annualPlanRows, setAnnualPlanRows] = useState<AnnualPlanRow[]>([
+    {
+      id: 1,
+      smt: 1,
+      temaProjek: 'Langkah Disiplin: G7KAIH untuk Karakter Mandiri',
+      dimensi: ['Keimanan & Ketakwaan', 'Kemandirian'],
+      bentuk: 'Gerakan 7 Kebiasaan Anak Indonesia Hebat (G7KAIH)',
+      jp: 72,
+      jam: 'Harian'
+    },
+    {
+      id: 2,
+      smt: 1,
+      temaProjek: `Generasi Berdedikasi: Detektif Belajar Bersama Sawit ${city || 'Kampar'}`,
+      dimensi: ['Penalaran Kritis', 'Kolaborasi'],
+      bentuk: 'Kolaboratif Lintas Disiplin / P5',
+      jp: 54,
+      jam: 'Blok'
+    },
+    {
+      id: 3,
+      smt: 2,
+      temaProjek: `Langkah Disiplin: Ibadah Tertib dan Karakter Unggul ${schoolName || 'SD IT'}`,
+      dimensi: ['Keimanan & Ketakwaan', 'Kemandirian'],
+      bentuk: 'Cara Lainnya (ciri khas satuan/madrasah)',
+      jp: 72,
+      jam: 'Harian'
+    },
+    {
+      id: 4,
+      smt: 2,
+      temaProjek: 'Generasi Berdedikasi: Inovasi Pemanfaatan Limbah Sawit Bersama Mitra',
+      dimensi: ['Penalaran Kritis', 'Kolaborasi'],
+      bentuk: 'Kolaboratif Lintas Disiplin / P5',
+      jp: 54,
+      jam: 'Blok'
+    }
+  ]);
+
+  const calculatedTotalJp = annualPlanRows.reduce((acc, row) => acc + (Number(row.jp) || 0), 0);
+  const projectCount = annualPlanRows.length || 4;
+  const scheduleSystem = 'blok';
+
+  const handleUpdateRow = (id: number, field: keyof AnnualPlanRow, val: any) => {
+    setAnnualPlanRows(prev => prev.map(r => r.id === id ? { ...r, [field]: val } : r));
+  };
+
+  // STEP 4: Pilih Projek State
+  const [selectedProjectIndex, setSelectedProjectIndex] = useState<number>(0);
+
+  // AI Generated project options - adapts to selected multi-themes
+  const primaryThemeTitle = selectedThemes.join(' & ');
+  const projectOptions = [
+    {
+      title: selectedThemes.length === 1 && selectedThemes[0] === 'Gaya Hidup Berkelanjutan'
+        ? 'Garda Hijau: Solusi Inovatif Daur Ulang Sampah Organik & Plastik di Lingkungan Sekolah'
+        : `Aksi Nyata Terpadu: Integrasi Tema ${primaryThemeTitle} di ${schoolName}`,
+      theme: selectedThemes.join(', '),
+      focusTopic: focusTopic || `Eksplorasi dan penerapan aksi tema ${primaryThemeTitle}`,
+      targetEndPhase: `Peserta didik mampu memahami keterpaduan tema ${primaryThemeTitle}, berkolaborasi secara inklusif dengan warga sekolah, dan menghasilkan aksi nyata berlandaskan Delapan Profil Lulusan.`,
+      badge: selectedThemes.length > 1 ? '🌟 Integrasi Multi-Tema' : '✨ Rekomendasi Utama AI',
+      desc: `Rangkaian tahapan penyelidikan kontekstual, kolaborasi tim, dan aksi berdampak langsung pada tema ${primaryThemeTitle} yang diintegrasikan dengan karakteristik ${schoolName} di ${city}.`
+    },
+    {
+      title: 'Pandu Bermain Adil: Festival Permainan Tradisional Kampar & Nilai Luhur Pancasila',
+      theme: 'Kearifan Lokal',
+      focusTopic: 'Pelestarian Permainan Tradisional Ramah Lingkungan & Gotong Royong',
+      targetEndPhase: 'Peserta didik mampu menggali kearifan lokal permainan tradisional, mengelola emosi dan aturan main secara musyawarah, serta mempraktikkan keadilan sosial dan kebersamaan.',
+      badge: '🌿 Kearifan Lokal',
+      desc: 'Eksplorasi permainan tradisional Kampar (Pecah Piring, Lari Tempurung) memanfaatkan pelepah & lidi sawit, simulasi kesepakatan aturan adil bersama orang tua, dan festival bermain.'
+    },
+    {
+      title: 'Kriya Lestari: Kreasi Daur Ulang Bernilai Guna dari Limbah Alam Sekitar',
+      theme: 'Kewirausahaan',
+      focusTopic: 'Pengembangan Produk Kerajinan Tangan Berbasis Sumber Daya Lokal',
+      targetEndPhase: 'Peserta didik mampu mengidentifikasi potensi limbah di sekitarnya, merancang produk kerajinan bernilai guna tinggi, dan menumbuhkan jiwa wirausaha berakhlak mulia.',
+      badge: '💡 Inovasi Kreatif',
+      desc: 'Riset material bekas bernilai guna di lingkungan sekolah, perancangan prototipe produk kriya, simulasi bazar mini sekolah, dan refleksi wirausaha cilik.'
+    }
+  ];
+
+  // STEP 5: Final Generated Project Document
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [savedBadge, setSavedBadge] = useState<boolean>(false);
   const [projectData, setProjectData] = useState<P5Project>({
     id: `KOKUR-${Date.now()}`,
-    title: 'Garda Hijau: Solusi Inovatif Daur Ulang Sampah Organik & Plastik di Lingkungan Sekolah',
+    title: projectOptions[0].title,
     targetLevel: 'dasmen',
-    gradeOrAge: 'Kelas 7 (Fase D)',
-    totalJp: 60,
-    theme: availableThemes[0].title,
-    focusTopic: 'Pemanfaatan Sampah Organik & Plastik di Sekolah',
-    dimensions: [
-      'Keimanan dan Ketakwaan kepada Tuhan Yang Maha Esa',
-      'Kewargaan',
-      'Kolaborasi',
-      'Penalaran Kritis'
-    ],
+    gradeOrAge: level === 'SD' ? 'Kelas 3 (Fase B)' : 'Kelas 7 (Fase D)',
+    totalJp: defaultJp,
+    theme: projectOptions[0].theme,
+    focusTopic: projectOptions[0].focusTopic,
+    dimensions: selectedDimensions,
     subDimensions: [
       'Akhlak kepada alam & pemeliharaan ekosistem',
       'Tanggung jawab sosial menjaga kebersihan lingkungan',
       'Kerja sama tim dalam aksi nyata lingkungan',
       'Analisis logis dan pemecahan masalah sampah sekolah'
     ],
-    targetEndPhase: 'Peserta didik mampu memahami keterhubungan ekosistem bumi, berkolaborasi secara inklusif dengan masyarakat sekolah, dan menghasilkan karya nyata yang mengurangi timbulan sampah berlandaskan Delapan Profil Lulusan.',
-    annualTimeline: 'Sistem blok mingguan pada pertengahan semester (total 60 JP). Pameran Gelar Karya diadakan pada pekan jeda semester.',
+    targetEndPhase: projectOptions[0].targetEndPhase,
+    annualTimeline: 'Sistem blok mingguan pada pertengahan semester (total 126 JP per semester). Pameran Gelar Karya diadakan pada pekan jeda semester.',
     flowPhases: {
       pengenalan: [
         'Aktivitas 1: Menonton video dokumenter dampak sampah terhadap keanekaragaman hayati dan ekosistem lokal.',
@@ -80,20 +266,56 @@ export const ProjekBuilder: React.FC<ProjekBuilderProps> = ({ globalContext, onS
           berkembangSesuaiHarapan: 'Bekerja sama secara aktif dan saling menghargai pendapat anggota tim demi kemaslahatan bersama.',
           sangatBerkembang: 'Memimpin koordinasi aksi sosial lingkungan dan memberi teladan positif kepada komunitas.'
         }
+      },
+      {
+        dimension: 'Penalaran Kritis',
+        subElement: 'Mengidentifikasi dan Mengolah Informasi Masalah',
+        stages: {
+          mulaiBerkembang: 'Mengetahui fakta bahwa sampah menumpuk namun belum tahu cara menanganinya.',
+          sedangBerkembang: 'Mampu menjelaskan jenis-jenis sampah yang ada di sekolah berdasarkan data audit.',
+          berkembangSesuaiHarapan: 'Menganalisis penyebab utama timbulan sampah dan merancang solusi daur ulang yang realistis.',
+          sangatBerkembang: 'Mengevaluasi efektivitas solusi yang dijalankan dan memberikan rekomendasi kebijakan baru bagi sekolah.'
+        }
       }
     ],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
 
-  const handleGenerate = async () => {
+  // Sync state when project option changes
+  const applyProjectOption = (idx: number) => {
+    setSelectedProjectIndex(idx);
+    const chosen = projectOptions[idx];
+    const themesArray = chosen.theme.split(', ').map(s => s.trim());
+    setSelectedThemes(themesArray);
+    setFocusTopic(chosen.focusTopic);
+    setProjectData(prev => ({
+      ...prev,
+      title: chosen.title,
+      theme: chosen.theme,
+      focusTopic: chosen.focusTopic,
+      targetEndPhase: chosen.targetEndPhase,
+      totalJp
+    }));
+  };
+
+  const handleToggleDimension = (dimName: string) => {
+    setSelectedDimensions(prev => {
+      const exists = prev.includes(dimName);
+      const updated = exists ? prev.filter(d => d !== dimName) : [...prev, dimName];
+      setProjectData(p => ({ ...p, dimensions: updated }));
+      return updated;
+    });
+  };
+
+  const handleGenerateFinalModule = async () => {
     setIsGenerating(true);
     try {
       const res = await generateP5Project({
-        theme: selectedThemeTitle,
+        theme: selectedThemes.join(', '),
         focusTopic,
         totalJp,
-        gradeOrAge,
+        gradeOrAge: level === 'SD' ? 'Kelas 3 (Fase B)' : 'Kelas 7 (Fase D)',
         path: 'dasmen',
         globalContext
       });
@@ -102,40 +324,91 @@ export const ProjekBuilder: React.FC<ProjekBuilderProps> = ({ globalContext, onS
       console.error(e);
     } finally {
       setIsGenerating(false);
+      setCurrentStep(5);
     }
   };
 
-  const handleToggleDimension = (dimName: string) => {
-    setProjectData(prev => {
-      const exists = prev.dimensions.includes(dimName);
-      return {
-        ...prev,
-        dimensions: exists 
-          ? prev.dimensions.filter(d => d !== dimName)
-          : [...prev.dimensions, dimName]
+  const [developingRowId, setDevelopingRowId] = useState<number | null>(null);
+
+  const getShortBentuk = (bentuk: string) => {
+    if (bentuk.includes('G7KAIH')) return 'G7KAIH';
+    if (bentuk.includes('Kolaboratif')) return 'Kolaboratif Lintas Disiplin';
+    if (bentuk.includes('Cara Lainnya')) return 'Cara Lainnya';
+    return bentuk;
+  };
+
+  const handleSelectAndDevelop = async (row: AnnualPlanRow) => {
+    setDevelopingRowId(row.id);
+    setIsGenerating(true);
+    try {
+      const initialUpdated: P5Project = {
+        ...projectData,
+        title: row.temaProjek,
+        theme: selectedThemes.join(', ') || 'Gaya Hidup Berkelanjutan',
+        focusTopic: row.temaProjek,
+        dimensions: row.dimensi,
+        totalJp: row.jp,
+        annualPlanRows,
+        annualTimeline: `Semester ${row.smt} (${row.jam}, ${row.jp} JP) - ${row.bentuk}`
       };
-    });
+      setProjectData(initialUpdated);
+
+      try {
+        const res = await generateP5Project({
+          theme: selectedThemes.join(', ') || row.temaProjek,
+          focusTopic: row.temaProjek,
+          totalJp: row.jp,
+          gradeOrAge: level === 'SD' ? 'Kelas 3 (Fase B)' : 'Kelas 7 (Fase D)',
+          path: 'dasmen',
+          globalContext
+        });
+        setProjectData({
+          ...res,
+          title: row.temaProjek,
+          dimensions: row.dimensi,
+          totalJp: row.jp,
+          annualPlanRows,
+          annualTimeline: `Semester ${row.smt} (${row.jam}, ${row.jp} JP) - ${row.bentuk}`
+        });
+      } catch (err) {
+        console.warn('AI generator fallback:', err);
+      }
+    } finally {
+      setIsGenerating(false);
+      setDevelopingRowId(null);
+      setCurrentStep(5);
+    }
   };
 
   const handleSaveDoc = () => {
+    const updatedData: P5Project = {
+      ...projectData,
+      annualPlanRows,
+      totalJp: calculatedTotalJp
+    };
     const doc: SavedDocument = {
-      id: projectData.id,
-      title: `Kokurikuler (DPL): ${projectData.title}`,
+      id: updatedData.id,
+      title: `Kokurikuler (DPL): ${updatedData.title}`,
       category: 'kokurikuler',
-      subjectOrTheme: projectData.theme,
-      gradeOrAge: projectData.gradeOrAge,
+      subjectOrTheme: updatedData.theme,
+      gradeOrAge: updatedData.gradeOrAge,
       createdAt: new Date().toISOString(),
-      data: projectData
+      data: updatedData
     };
     onSaveToCollection(doc);
     setSavedBadge(true);
-    setTimeout(() => setSavedBadge(false), 2500);
+    setTimeout(() => setSavedBadge(false), 3000);
   };
 
   const handleExportDocx = async () => {
     try {
-      const blob = await exportKokurikulerToDocx(projectData, globalContext);
-      downloadBlob(blob, `Kokurikuler_DPL_${projectData.title.slice(0, 30)}.docx`);
+      const updatedData: P5Project = {
+        ...projectData,
+        annualPlanRows,
+        totalJp: calculatedTotalJp
+      };
+      const blob = await exportKokurikulerToDocx(updatedData, globalContext);
+      downloadBlob(blob, `Kokurikuler_DPL_${updatedData.title.slice(0, 30)}.docx`);
     } catch (err) {
       console.error('Error exporting Kokurikuler to docx:', err);
     }
@@ -145,259 +418,727 @@ export const ProjekBuilder: React.FC<ProjekBuilderProps> = ({ globalContext, onS
     printKokurikuler(projectData, globalContext);
   };
 
+  const stepLabels = [
+    { num: 1, label: 'Fokus' },
+    { num: 2, label: 'Dimensi & Tema' },
+    { num: 3, label: 'Rencana setahun' },
+    { num: 4, label: 'Pilih projek' },
+    { num: 5, label: 'Kembangkan' }
+  ];
+
   return (
-    <div className="space-y-6 max-w-5xl mx-auto animate-fadeIn">
-      {/* Header */}
-      <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-2xs space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Compass className="w-5 h-5 text-amber-500" />
-              Kokurikuler — Delapan Profil Lulusan (DPL)
+    <div className="max-w-5xl mx-auto space-y-6 animate-fadeIn text-left pb-12">
+      {/* Breadcrumb & Title Sesuai koku.png */}
+      <div>
+        <p className="text-xs font-semibold text-slate-500 tracking-wide uppercase">
+          Kokurikuler / Projek
+        </p>
+        <h2 className="text-2xl sm:text-3xl font-bold text-[#0f2942] tracking-tight mt-1 font-serif">
+          Buat Modul Kokurikuler
+        </h2>
+      </div>
+
+      {/* 5 Step Pills / Navigation Bar Sesuai koku.png */}
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        {stepLabels.map((step) => {
+          const isActive = currentStep === step.num;
+          const isPassed = currentStep > step.num;
+
+          return (
+            <button
+              key={step.num}
+              type="button"
+              onClick={() => setCurrentStep(step.num)}
+              className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-2xl text-xs sm:text-sm transition-all cursor-pointer shadow-2xs ${
+                isActive
+                  ? 'bg-white border-2 border-[#0f2942] font-bold text-[#0f2942]'
+                  : 'bg-white border border-slate-200 font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900'
+              }`}
+            >
+              <span
+                className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                  isPassed
+                    ? 'bg-emerald-700 text-white'
+                    : isActive
+                    ? 'bg-[#0f2942] text-white'
+                    : 'bg-slate-200 text-slate-500'
+                }`}
+              >
+                {step.num}
+              </span>
+              <span>{step.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ========================================================================= */}
+      {/* STEP 1: FOKUS (PERSIS SEPERTI GAMBAR koku.png) */}
+      {/* ========================================================================= */}
+      {currentStep === 1 && (
+        <div className="bg-white rounded-3xl p-6 sm:p-10 border border-slate-200/90 shadow-2xs space-y-6">
+          <div className="space-y-1.5">
+            <h3 className="text-xl font-bold text-[#0f2942]">
+              Fokus kokurikuler
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Modul kegiatan kokurikuler terpadu lintas disiplin berbasis 4 alur tahapan (Pengenalan, Kontekstualisasi, Aksi, Refleksi) dengan sasaran Delapan Profil Lulusan.
+            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+              Konteks sekolah, profil murid &amp; isu komunitas sudah tersimpan. Lengkapi alokasi jam, lalu biar AI merekomendasikan dimensi &amp; tema.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Form: Total alokasi JP kokurikuler / tahun */}
+          <div className="space-y-2">
+            <label className="block text-xs sm:text-sm font-semibold text-slate-900">
+              Total alokasi JP kokurikuler / tahun
+            </label>
+            <input
+              type="number"
+              value={totalJp}
+              onChange={(e) => setTotalJp(parseInt(e.target.value) || 0)}
+              className="w-full px-4 py-3 border border-slate-200 rounded-xl text-slate-900 font-medium text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-[#0f2942] transition-colors"
+              placeholder="252"
+            />
+          </div>
+
+          {/* Rekomendasi Box Kemendikdasmen (Sesuai koku.png) */}
+          <div className="bg-sky-50/70 border border-sky-100 rounded-xl p-3.5 sm:p-4 text-xs sm:text-sm text-slate-700 flex items-start sm:items-center gap-2.5">
+            <span className="text-base shrink-0">💡</span>
+            <p className="leading-relaxed">
+              Rekomendasi Kemendikdasmen: <strong>SD 252 JP</strong> · <strong>SMP 360 JP</strong> · <strong>SMA 396 JP</strong> · <strong>SMK 180 JP</strong>. Sesuaikan dengan sekolahmu.
+            </p>
+          </div>
+
+          {/* Ringkasan Konteks Sekolah Tersimpan */}
+          <div className="p-4 bg-slate-50/70 border border-slate-200/80 rounded-2xl text-xs text-slate-700 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                Data Konteks Sekolah Siap
+              </span>
+              <span className="text-[11px] text-slate-500">{schoolName} · {city}</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-600 pt-1 border-t border-slate-200/60">
+              <p>• <strong>Profil Murid:</strong> {studentProfile.slice(0, 75)}...</p>
+              <p>• <strong>Isu Komunitas:</strong> {communityIssue.slice(0, 75)}...</p>
+            </div>
+          </div>
+
+          {/* Tombol Aksi: Rekomendasikan dimensi & tema → (Sesuai koku.png) */}
+          <div className="pt-2">
             <button
-              onClick={handlePrint}
-              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
-              title="Cetak atau Simpan PDF"
+              type="button"
+              onClick={() => setCurrentStep(2)}
+              className="px-6 py-3 bg-[#0f2942] hover:bg-[#1a3a5a] text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 shadow-2xs transition-all cursor-pointer"
             >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Cetak / PDF</span>
-            </button>
-            <button
-              onClick={handleExportDocx}
-              className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
-              title="Unduh format Microsoft Word (.docx)"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Ekspor Word</span>
-            </button>
-            <button
-              onClick={handleGenerate}
-              disabled={isGenerating}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm transition-all"
-            >
-              <Sparkles className={`w-3.5 h-3.5 ${isGenerating ? 'animate-spin' : ''}`} />
-              <span>{isGenerating ? 'Menyusun Modul Kokurikuler...' : 'Rancang Kokurikuler (AI)'}</span>
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              <span>Rekomendasikan dimensi &amp; tema →</span>
             </button>
           </div>
         </div>
+      )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Tema Kokurikuler</label>
-            <select
-              value={selectedThemeTitle}
-              onChange={(e) => setSelectedThemeTitle(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
-            >
-              {availableThemes.map((t, idx) => (
-                <option key={idx} value={t.title}>{t.title}</option>
-              ))}
-            </select>
+      {/* ========================================================================= */}
+      {/* STEP 2: DIMENSI & TEMA */}
+      {/* ========================================================================= */}
+      {currentStep === 2 && (
+        <div className="bg-white rounded-3xl p-6 sm:p-10 border border-slate-200/90 shadow-2xs space-y-6">
+          <div className="space-y-1.5">
+            <h3 className="text-xl font-bold text-[#0f2942]">
+              Dimensi &amp; Tema Kokurikuler
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+              AI telah memetakan rekomendasi Delapan Profil Lulusan (DPL) serta tema kokurikuler Kemendikdasmen berdasarkan konteks {schoolName} di {city} dengan alokasi {totalJp} JP/tahun.
+            </p>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Fokus Topik Masalah</label>
+
+          {/* Sasaran Delapan Profil Lulusan (DPL) */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                <Award className="w-4 h-4 text-amber-500" />
+                Pilih Dimensi Sasaran Delapan Profil Lulusan (DPL):
+              </label>
+              <span className="text-xs text-slate-500 font-medium">
+                {selectedDimensions.length} dimensi dipilih
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {DELAPAN_PROFIL_LULUSAN.map((dpl) => {
+                const isSelected = selectedDimensions.includes(dpl.name);
+                const isAiRecommended = ['Kolaborasi', 'Kewargaan', 'Penalaran Kritis', 'Keimanan dan Ketakwaan kepada Tuhan Yang Maha Esa'].includes(dpl.name);
+
+                return (
+                  <div
+                    key={dpl.id}
+                    onClick={() => handleToggleDimension(dpl.name)}
+                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer text-xs space-y-1 ${
+                      isSelected
+                        ? 'border-slate-900 bg-slate-50/70 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`font-bold ${isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
+                        {dpl.name}
+                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isAiRecommended && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-semibold flex items-center gap-0.5">
+                            <Sparkles className="w-2.5 h-2.5 text-amber-700" /> AI
+                          </span>
+                        )}
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 line-clamp-2">
+                      {dpl.desc}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Pilihan Tema Utama Kemendikdasmen & Kustom */}
+          <div className="space-y-3 pt-3 border-t border-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <label className="text-xs sm:text-sm font-bold text-slate-900 block">
+                  Pilih Tema Utama Kokurikuler:
+                </label>
+                <p className="text-[11px] text-slate-500">
+                  Pilih satu atau <strong>beberapa tema sekaligus</strong> dari referensi Kemendikdasmen atau tema kustom sekolah.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddCustomTheme(!showAddCustomTheme)}
+                className="text-xs font-semibold text-[#0f2942] hover:text-[#1a3a5a] bg-sky-50 hover:bg-sky-100 border border-sky-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5 text-[#0f2942]" />
+                <span>+ Tambah Tema Sendiri (Kustom)</span>
+              </button>
+            </div>
+
+            {/* Inputan untuk menambahkan tema sendiri */}
+            {showAddCustomTheme && (
+              <div className="p-4 bg-sky-50/60 border-2 border-dashed border-sky-300 rounded-2xl space-y-3 animate-fadeIn">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    Tambah Tema Kokurikuler Kustom Sendiri
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCustomTheme(false)}
+                    className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-600">
+                  Tuliskan tema baru yang dirancang khusus sesuai dengan visi, keunikan lingkungan, atau program unggulan satuan pendidikan.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                      Nama Tema Sendiri <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={customThemeTitleInput}
+                      onChange={(e) => setCustomThemeTitleInput(e.target.value)}
+                      placeholder="Contoh: Literasi Digital & AI, Kebudayaan Sungai Kampar"
+                      className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0f2942]"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddCustomTheme();
+                        }
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-800 mb-1">
+                      Deskripsi Singkat Tema (Opsional)
+                    </label>
+                    <input
+                      type="text"
+                      value={customThemeDescInput}
+                      onChange={(e) => setCustomThemeDescInput(e.target.value)}
+                      placeholder="Contoh: Eksplorasi teknologi digital beretika dan kearifan ekosistem sungai"
+                      className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0f2942]"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddCustomTheme();
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCustomTheme(false)}
+                    className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddCustomTheme}
+                    disabled={!customThemeTitleInput.trim()}
+                    className="px-4 py-1.5 bg-[#0f2942] hover:bg-[#1a3a5a] text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Tambahkan Tema Ini</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Grid Tema Kemendikdasmen + Tema Kustom (Mendukung Multi-Pilihan) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {allAvailableThemes.map((t, idx) => {
+                const isSelected = selectedThemes.includes(t.title);
+                const isTopPick = t.title === 'Gaya Hidup Berkelanjutan';
+
+                return (
+                  <div
+                    key={idx}
+                    onClick={() => handleToggleTheme(t.title)}
+                    className={`p-3 rounded-2xl border transition-all cursor-pointer text-xs space-y-1 relative select-none ${
+                      isSelected
+                        ? 'border-[#0f2942] bg-sky-50/70 shadow-2xs ring-2 ring-[#0f2942]/25'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-1.5">
+                      <div className="flex items-start gap-1.5 font-bold text-slate-900 leading-snug">
+                        <div className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors ${
+                          isSelected ? 'bg-[#0f2942] text-white' : 'border border-slate-300 bg-white'
+                        }`}>
+                          {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                        </div>
+                        <span>{t.title}</span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isTopPick && !t.isCustom && (
+                          <span className="text-[9px] px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded-full font-bold">
+                            Rekomendasi
+                          </span>
+                        )}
+                        {t.isCustom && (
+                          <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-900 rounded-full font-bold">
+                            Kustom
+                          </span>
+                        )}
+                        {t.isCustom && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleRemoveCustomTheme(t.title, e)}
+                            className="text-slate-400 hover:text-rose-600 p-0.5 transition-colors cursor-pointer"
+                            title="Hapus tema kustom ini"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-slate-500 line-clamp-2 pl-5.5">
+                      {t.desc}
+                    </p>
+                  </div>
+                );
+              })}
+
+              {/* Card Tambah Tema Sendiri langsung di dalam grid */}
+              <div
+                onClick={() => setShowAddCustomTheme(true)}
+                className="p-3 rounded-2xl border-2 border-dashed border-slate-300 hover:border-[#0f2942] bg-slate-50/60 hover:bg-sky-50/30 transition-all cursor-pointer text-xs flex flex-col items-center justify-center text-center space-y-1 min-h-[90px]"
+              >
+                <div className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center">
+                  <Plus className="w-4 h-4" />
+                </div>
+                <span className="font-bold text-slate-700 text-[11px]">+ Tema Sendiri</span>
+                <span className="text-[10px] text-slate-500">Tulis tema kustom sekolah</span>
+              </div>
+            </div>
+
+            {/* Status Tema Terpilih (Multi-Tema) */}
+            <div className="bg-slate-50/90 p-3.5 rounded-2xl border border-slate-200 text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-700 font-bold flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-[#0f2942]" />
+                  Tema Terpilih ({selectedThemes.length} tema):
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  Centang lebih dari satu tema untuk perancangan terpadu
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                {selectedThemes.map((th, i) => {
+                  const isCustom = customThemes.some(c => c.title === th);
+                  return (
+                    <span
+                      key={i}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold ${
+                        isCustom
+                          ? 'bg-amber-100 text-amber-950 border border-amber-300'
+                          : 'bg-sky-100 text-[#0f2942] border border-sky-300'
+                      }`}
+                    >
+                      <Check className="w-3 h-3 text-[#0f2942]" />
+                      <span>{th}</span>
+                      {selectedThemes.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleTheme(th);
+                          }}
+                          className="text-slate-500 hover:text-rose-600 p-0.5 rounded cursor-pointer transition-colors"
+                          title="Batalkan pilihan tema ini"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Fokus Isu Masalah */}
+          <div className="space-y-2 pt-2 border-t border-slate-100">
+            <label className="block text-xs sm:text-sm font-semibold text-slate-900">
+              Fokus Topik Masalah di Lingkungan Sekolah:
+            </label>
             <input
               type="text"
               value={focusTopic}
               onChange={(e) => setFocusTopic(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
-              placeholder="Contoh: Pengelolaan Sampah Plastik di Sekolah"
+              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0f2942]"
+              placeholder="Contoh: Pemanfaatan Sampah Organik & Plastik di Lingkungan Sekolah"
             />
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Sasaran Kelas & Alokasi JP</label>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                type="text"
-                value={gradeOrAge}
-                onChange={(e) => setGradeOrAge(e.target.value)}
-                className="w-full px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                placeholder="Kelas 7"
-              />
-              <input
-                type="number"
-                value={totalJp}
-                onChange={(e) => setTotalJp(parseInt(e.target.value) || 0)}
-                className="w-full px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                placeholder="60 JP"
-              />
+
+          {/* Navigation Buttons */}
+          <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(1)}
+              className="px-5 py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Kembali</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentStep(3)}
+              className="px-6 py-2.5 bg-[#0f2942] hover:bg-[#1a3a5a] text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            >
+              <span>Susun rencana setahun →</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* STEP 3: RENCANA SETAHUN (Format Persis Sesuai image.png) */}
+      {/* ========================================================================= */}
+      {currentStep === 3 && (
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/90 shadow-2xs space-y-5">
+          {/* Judul Bagian */}
+          <h3 className="text-xl sm:text-2xl font-bold text-[#0f2942] font-serif">
+            Rencana Kokurikuler Setahun
+          </h3>
+
+          {/* Banner Informasi AI */}
+          <div className="bg-[#eef5fc] text-[#0f2942] px-4 py-3 rounded-xl text-xs sm:text-sm flex items-center gap-2.5 border border-sky-100/60">
+            <span className="text-base leading-none">✎</span>
+            <span>
+              AI sudah menyusun rencana. <strong>Edit langsung di tabel</strong> bila perlu.
+            </span>
+          </div>
+
+          {/* Kartu Rencana Kokurikuler Sekolah */}
+          <div className="border border-slate-200 rounded-2xl p-5 sm:p-6 bg-white space-y-3.5 shadow-2xs">
+            {/* Header Sekolah & Total JP */}
+            <div>
+              <h4 className="text-base sm:text-lg font-bold text-[#0f2942]">
+                Rencana Kokurikuler {schoolName || 'SD IT'}
+              </h4>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">
+                Jenjang: {level || 'SD'} | Total: {calculatedTotalJp} JP
+              </p>
+            </div>
+
+            {/* Sub-banner Petunjuk Edit */}
+            <div className="bg-[#eef5fc] text-[#0f2942] px-3.5 py-2 rounded-xl text-xs flex items-center gap-2 border border-sky-100/60">
+              <span className="text-sm leading-none">✎</span>
+              <span>
+                Klik sel <strong>Tema/Projek</strong> atau dropdown untuk mengedit langsung.
+              </span>
+            </div>
+
+            {/* Tabel Rencana Kokurikuler Persis image.png */}
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-xs border-collapse">
+                <thead className="bg-[#0f2942] text-white">
+                  <tr>
+                    <th className="py-2.5 px-3 text-center font-bold text-xs uppercase tracking-wider w-12 border-r border-slate-700/60">
+                      NO
+                    </th>
+                    <th className="py-2.5 px-3 font-bold text-xs uppercase tracking-wider w-20 border-r border-slate-700/60 text-center">
+                      SMT
+                    </th>
+                    <th className="py-2.5 px-4 font-bold text-xs uppercase tracking-wider border-r border-slate-700/60 text-left">
+                      TEMA / PROJEK
+                    </th>
+                    <th className="py-2.5 px-3 font-bold text-xs uppercase tracking-wider w-48 border-r border-slate-700/60 text-left">
+                      DIMENSI
+                    </th>
+                    <th className="py-2.5 px-3 font-bold text-xs uppercase tracking-wider w-44 border-r border-slate-700/60 text-left">
+                      BENTUK
+                    </th>
+                    <th className="py-2.5 px-3 text-center font-bold text-xs uppercase tracking-wider w-16 border-r border-slate-700/60">
+                      JP
+                    </th>
+                    <th className="py-2.5 px-3 font-bold text-xs uppercase tracking-wider w-28 text-center">
+                      JAM
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 bg-white">
+                  {annualPlanRows.map((row) => (
+                    <tr key={row.id} className="hover:bg-slate-50/60 transition-colors">
+                      {/* NO */}
+                      <td className="py-3.5 px-3 text-center font-medium text-slate-700 border-r border-slate-200 align-middle">
+                        {row.id}
+                      </td>
+
+                      {/* SMT Dropdown */}
+                      <td className="py-3.5 px-2 border-r border-slate-200 text-center align-middle">
+                        <select
+                          value={row.smt}
+                          onChange={(e) => handleUpdateRow(row.id, 'smt', Number(e.target.value))}
+                          aria-label={`Pilih Semester baris ${row.id}`}
+                          className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-[#0f2942] cursor-pointer shadow-2xs"
+                        >
+                          <option value={1}>1</option>
+                          <option value={2}>2</option>
+                        </select>
+                      </td>
+
+                      {/* TEMA / PROJEK */}
+                      <td className="py-3 px-3 border-r border-slate-200 align-middle">
+                        <textarea
+                          rows={2}
+                          value={row.temaProjek}
+                          onChange={(e) => handleUpdateRow(row.id, 'temaProjek', e.target.value)}
+                          placeholder="Tuliskan nama tema / projek..."
+                          className="w-full px-2 py-1.5 text-xs text-slate-900 border border-transparent hover:border-slate-200 focus:border-slate-300 focus:bg-white rounded-lg resize-none outline-none leading-relaxed transition-colors font-medium"
+                        />
+                      </td>
+
+                      {/* DIMENSI (Pill Badges Biru Muda) */}
+                      <td className="py-3.5 px-3 border-r border-slate-200 align-middle">
+                        <div className="flex flex-col gap-1.5 items-start">
+                          {row.dimensi.map((dim, dIdx) => (
+                            <span
+                              key={dIdx}
+                              className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#e8f2fc] text-[#0f2942] border border-sky-200/80 whitespace-nowrap"
+                            >
+                              {dim}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+
+                      {/* BENTUK Dropdown */}
+                      <td className="py-3.5 px-2 border-r border-slate-200 align-middle">
+                        <select
+                          value={row.bentuk}
+                          onChange={(e) => handleUpdateRow(row.id, 'bentuk', e.target.value)}
+                          aria-label={`Pilih Bentuk baris ${row.id}`}
+                          className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-[#0f2942] cursor-pointer shadow-2xs truncate"
+                        >
+                          <option value="Gerakan 7 Kebiasaan Anak Indonesia Hebat (G7KAIH)">
+                            Gerakan 7 Kebias...
+                          </option>
+                          <option value="Kolaboratif Lintas Disiplin / P5">
+                            Kolaboratif Lintas...
+                          </option>
+                          <option value="Cara Lainnya (ciri khas satuan/madrasah)">
+                            Cara Lainnya (ciri...
+                          </option>
+                        </select>
+                      </td>
+
+                      {/* JP Input */}
+                      <td className="py-3.5 px-2 border-r border-slate-200 text-center align-middle">
+                        <input
+                          type="number"
+                          value={row.jp}
+                          onChange={(e) => handleUpdateRow(row.id, 'jp', Number(e.target.value))}
+                          aria-label={`Alokasi JP baris ${row.id}`}
+                          className="w-14 px-1.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 text-center bg-white focus:outline-none focus:ring-2 focus:ring-[#0f2942] shadow-2xs"
+                        />
+                      </td>
+
+                      {/* JAM Dropdown */}
+                      <td className="py-3.5 px-2 text-center align-middle">
+                        <select
+                          value={row.jam}
+                          onChange={(e) => handleUpdateRow(row.id, 'jam', e.target.value)}
+                          aria-label={`Pilih Sistem Jam baris ${row.id}`}
+                          className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-[#0f2942] cursor-pointer shadow-2xs"
+                        >
+                          <option value="Harian">Harian</option>
+                          <option value="Blok">Blok</option>
+                          <option value="Mingguan">Mingguan</option>
+                          <option value="Parsial">Parsial</option>
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
 
-        {/* Quick DPL Dimension Toggles */}
-        <div className="pt-3 border-t border-slate-100 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-              <Award className="w-3.5 h-3.5 text-amber-600" />
-              Sasaran Delapan Profil Lulusan (DPL):
-            </span>
-            <span className="text-[11px] text-slate-400">Klik untuk menyalakan/mematikan dimensi</span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {DELAPAN_PROFIL_LULUSAN.map((dpl) => {
-              const active = projectData.dimensions.some(d => 
-                d.toLowerCase().includes(dpl.name.toLowerCase()) || 
-                dpl.name.toLowerCase().includes(d.toLowerCase())
-              );
-              return (
-                <button
-                  key={dpl.id}
-                  type="button"
-                  onClick={() => handleToggleDimension(dpl.name)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                    active
-                      ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  {dpl.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Project Card Preview */}
-      <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-2xs space-y-5">
-        <div>
-          <span className="text-[10px] font-bold px-2.5 py-1 bg-amber-100 text-amber-800 rounded-full uppercase tracking-wider">
-            Tema Kokurikuler: {projectData.theme}
-          </span>
-          <h3 className="text-base sm:text-lg font-bold text-slate-900 mt-2">{projectData.title}</h3>
-          <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-            Sasaran: {projectData.gradeOrAge} • Alokasi: {projectData.totalJp} JP • Jadwal: {projectData.annualTimeline}
-          </p>
-        </div>
-
-        {/* Dimensi & Elemen */}
-        <div className="bg-amber-50/60 p-4 rounded-xl border border-amber-200 text-xs space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-amber-900 block uppercase tracking-wider text-[11px]">
-              Dimensi Sasaran Delapan Profil Lulusan (DPL):
-            </span>
-            <span className="text-[10px] text-amber-700 font-semibold">{projectData.dimensions.length} Dimensi Terpilih</span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {projectData.dimensions.map((d, i) => (
-              <span key={i} className="px-2.5 py-1 bg-white border border-amber-300 rounded-lg text-amber-950 font-semibold text-xs flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                {d}
-              </span>
-            ))}
-          </div>
-          {projectData.subDimensions && projectData.subDimensions.length > 0 && (
-            <div className="pt-2 border-t border-amber-200/60 text-slate-600 space-y-1">
-              <span className="font-semibold text-amber-900 text-[11px] block">Elemen & Sub-Elemen Sasaran:</span>
-              <ul className="list-disc pl-4 space-y-0.5 text-[11px]">
-                {projectData.subDimensions.map((sd, i) => (
-                  <li key={i}>{sd}</li>
-                ))}
-              </ul>
+          {/* Notifikasi Toast Tersimpan jika ada */}
+          {savedBadge && (
+            <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 animate-fadeIn">
+              <Check className="w-4 h-4 text-emerald-600" />
+              <span>Rencana Kokurikuler berhasil disimpan ke Koleksi Dokumen!</span>
             </div>
           )}
-        </div>
 
-        {/* 4 Alur Kokurikuler */}
-        <div className="space-y-3">
-          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-            Alur Tahapan Pelaksanaan Kokurikuler (4 Tahap):
-          </h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-              <span className="font-bold text-xs block text-emerald-800">1. Tahap Pengenalan</span>
-              <ul className="list-disc pl-4 text-slate-600 space-y-1">
-                {projectData.flowPhases.pengenalan.map((item, i) => <li key={i}>{item}</li>)}
-              </ul>
+          {/* Tombol Aksi Bawah Persis Seperti image.png */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleExportDocx}
+                className="px-4 py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-800 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-colors"
+              >
+                <Download className="w-4 h-4 text-slate-700" />
+                <span>Unduh (Word)</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveDoc}
+                className="px-4 py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-800 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-colors"
+              >
+                <Bookmark className="w-4 h-4 text-purple-700" />
+                <span>Simpan ke Koleksi</span>
+              </button>
             </div>
 
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-              <span className="font-bold text-xs block text-blue-800">2. Tahap Kontekstualisasi</span>
-              <ul className="list-disc pl-4 text-slate-600 space-y-1">
-                {projectData.flowPhases.kontekstualisasi.map((item, i) => <li key={i}>{item}</li>)}
-              </ul>
-            </div>
-
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-              <span className="font-bold text-xs block text-amber-800">3. Tahap Aksi Nyata</span>
-              <ul className="list-disc pl-4 text-slate-600 space-y-1">
-                {projectData.flowPhases.aksi.map((item, i) => <li key={i}>{item}</li>)}
-              </ul>
-            </div>
-
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-              <span className="font-bold text-xs block text-purple-800">4. Tahap Refleksi & Tindak Lanjut</span>
-              <ul className="list-disc pl-4 text-slate-600 space-y-1">
-                {projectData.flowPhases.refleksi.map((item, i) => <li key={i}>{item}</li>)}
-              </ul>
-            </div>
+            <button
+              type="button"
+              onClick={() => setCurrentStep(4)}
+              className="px-6 py-2.5 bg-[#0f2942] hover:bg-[#1a3a5a] text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-colors"
+            >
+              <span>Lanjut: Pilih Projek →</span>
+            </button>
           </div>
         </div>
+      )}
 
-        {/* Rubrik Penilaian */}
-        <div className="space-y-2">
-          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-            Rubrik Asesmen Capaian Kokurikuler (DPL):
-          </h4>
-          <div className="space-y-2">
-            {projectData.assessmentRubric.map((r, i) => (
-              <div key={i} className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1.5">
-                <span className="font-bold text-slate-900 block">{r.dimension} — {r.subElement}</span>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-[11px]">
-                  <div className="p-2 bg-white rounded-lg border border-slate-200">
-                    <strong className="text-rose-700 block">Mulai Berkembang (MB)</strong>
-                    <p className="text-slate-600 mt-0.5">{r.stages.mulaiBerkembang}</p>
-                  </div>
-                  <div className="p-2 bg-white rounded-lg border border-slate-200">
-                    <strong className="text-amber-700 block">Sedang Berkembang (SB)</strong>
-                    <p className="text-slate-600 mt-0.5">{r.stages.sedangBerkembang}</p>
-                  </div>
-                  <div className="p-2 bg-white rounded-lg border border-slate-200">
-                    <strong className="text-sky-700 block">Sesuai Harapan (BSH)</strong>
-                    <p className="text-slate-600 mt-0.5">{r.stages.berkembangSesuaiHarapan}</p>
-                  </div>
-                  <div className="p-2 bg-white rounded-lg border border-slate-200">
-                    <strong className="text-emerald-700 block">Sangat Berkembang (SAB)</strong>
-                    <p className="text-slate-600 mt-0.5">{r.stages.sangatBerkembang}</p>
-                  </div>
+      {/* ========================================================================= */}
+      {/* STEP 4: PILIH PROJEK (Format Persis Sesuai pilih proyek.png) */}
+      {/* ========================================================================= */}
+      {currentStep === 4 && (
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/90 shadow-2xs space-y-6">
+          <div className="space-y-1">
+            <h3 className="text-xl sm:text-2xl font-bold text-[#0f2942] font-serif">
+              Pilih Projek untuk Dikembangkan
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-500 font-normal">
+              Kembangkan tiap projek jadi modul kokurikuler lengkap dengan rubrik &amp; asesmen.
+            </p>
+          </div>
+
+          {/* 4 Cards Sesuai Rencana Setahun */}
+          <div className="space-y-4">
+            {annualPlanRows.map((row) => (
+              <div
+                key={row.id}
+                className="border border-slate-200/90 rounded-2xl p-5 sm:p-6 bg-white space-y-3 shadow-2xs hover:border-slate-300 transition-all"
+              >
+                {/* 3 Badges: Smt, Bentuk, JP */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="bg-[#eef5fc] text-[#0f2942] border border-sky-100/80 text-[11px] font-bold px-2.5 py-0.5 rounded-md">
+                    Smt {row.smt}
+                  </span>
+                  <span className="bg-[#eef5fc] text-[#0f2942] border border-sky-100/80 text-[11px] font-bold px-2.5 py-0.5 rounded-md">
+                    {getShortBentuk(row.bentuk)}
+                  </span>
+                  <span className="bg-[#eef5fc] text-[#0f2942] border border-sky-100/80 text-[11px] font-bold px-2.5 py-0.5 rounded-md">
+                    {row.jp} JP
+                  </span>
+                </div>
+
+                {/* Judul & Dimensi */}
+                <div className="space-y-1">
+                  <h4 className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
+                    {row.id}. {row.temaProjek}
+                  </h4>
+                  <p className="text-xs text-slate-600 font-medium">
+                    Dimensi: {row.dimensi.join(', ')}
+                  </p>
+                </div>
+
+                {/* Tombol Kembangkan */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectAndDevelop(row)}
+                    disabled={isGenerating}
+                    className="px-5 py-2 bg-[#0f2942] hover:bg-[#1a3a5a] text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors disabled:opacity-60"
+                  >
+                    {isGenerating && developingRowId === row.id ? (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                        <span>Menyusun...</span>
+                      </>
+                    ) : (
+                      <span>Kembangkan →</span>
+                    )}
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Action Footer */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-        <div>
-          {savedBadge && (
-            <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1 animate-fadeIn">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Modul Kokurikuler (DPL) tersimpan di Koleksi!
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleExportDocx}
-            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
-          >
-            <Download className="w-3.5 h-3.5" /> Unduh DOCX
-          </button>
-          <button
-            onClick={handleSaveDoc}
-            className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
-          >
-            <Bookmark className="w-3.5 h-3.5" /> Simpan ke Koleksi Dokumen
-          </button>
-        </div>
-      </div>
+      {/* ========================================================================= */}
+      {/* STEP 5: KEMBANGKAN (MODUL KOKURIKULER SESUAI FORMAT kembangko.pdf) */}
+      {/* ========================================================================= */}
+      {currentStep === 5 && (
+        <Step5Kembangkan
+          projectData={projectData}
+          annualPlanRows={annualPlanRows}
+          schoolName={schoolName}
+          level={level}
+          onSaveToCollection={onSaveToCollection}
+          handlePrint={handlePrint}
+          handleExportDocx={handleExportDocx}
+          onBackToStep4={() => setCurrentStep(4)}
+        />
+      )}
     </div>
   );
 };
